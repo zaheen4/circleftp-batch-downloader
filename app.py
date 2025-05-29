@@ -4,12 +4,13 @@ import time
 import sys
 import tempfile
 import pathlib
-
+import json
 import socket # For internet connection check
 import psutil # For checking running processes
 
 from bs4 import BeautifulSoup
 import customtkinter as ctk
+from customtkinter import filedialog
 from PIL import Image
 import threading
 
@@ -26,13 +27,19 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # --- Configuration ---
 # IMPORTANT: Replace this with the actual path to your idman.exe
-IDM_PATH = r"C:\Program Files (x86)\Internet Download Manager\idman.exe"
+# IDM_PATH = r"C:\Program Files (x86)\Internet Download Manager\idman.exe"
 
 # --- WebDriver Paths Configuration ---
 if getattr(sys, 'frozen', False):
     BUNDLE_DIR = sys._MEIPASS
 else:
     BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# --- Configuration File Path ---
+CONFIG_DIR = os.path.join(os.path.expanduser('~'), 'CircleFTPDownloaderConfig')
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
 
 DRIVER_DIR = os.path.join(BUNDLE_DIR, "drivers")
 ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
@@ -42,7 +49,7 @@ GECKODRIVER_PATH = os.path.join(DRIVER_DIR, "geckodriver.exe")
 EDGEDRIVER_PATH = os.path.join(DRIVER_DIR, "msedgedriver.exe")
 
 # --- Global variable to hold the selected browser type ---
-selected_browser_type = "chrome" # Default selection
+# selected_browser_type = "chrome" # Default selection
 
 
 # --- Utility Functions for Checks ---
@@ -52,24 +59,6 @@ def is_connected_to_internet(host="8.8.8.8", port=53, timeout=3):
         return True
     except OSError:
         return False
-
-def is_idm_running():
-    for proc in psutil.process_iter(['name']):
-        if proc.info['name'].lower() == 'idman.exe':
-            return True
-    return False
-
-def launch_idm():
-    if not is_idm_running():
-        try:
-            subprocess.Popen(IDM_PATH, creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
-            time.sleep(1) # Give IDM a moment to initialize
-            return True
-        except FileNotFoundError:
-            return False
-        except Exception:
-            return False
-    return True
 
 
 # --- Helper Function: Get Full HTML Content using Selenium ---
@@ -259,7 +248,45 @@ class DownloaderApp(ctk.CTk):
         super().__init__()
 
         self.title("CircleFTP Batch Downloader")
-        self.geometry("600x580") # Increased height for batch size input
+        # self.geometry("580x640") # Increased height for batch size input
+
+        # --- Set Window Size ---
+        app_width = 580
+        app_height = 640
+
+        # --- Center the Window on the Screen ---
+        # Get screen width and height
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        # Define a margin from the right edge and top edge (optional, for aesthetics)
+        margin_right = 15  # Pixels from the right edge of the screen
+        margin_top = 30    # Pixels from the top edge of the screen (or use vertical centering)
+
+        # Calculate x coordinate to place it on the right with a margin
+        x_coordinate = screen_width - app_width - margin_right
+        
+        # Ensure x_coordinate is not negative (if the app is wider than the screen somehow)
+        x_coordinate = max(x_coordinate, 0) 
+
+        # For y coordinate, you can either center it vertically or set a fixed margin from the top.
+        # Option 1: Vertically Centered (like before)
+        y_coordinate_centered = int((screen_height / 2) - (app_height / 2))
+        y_coordinate = max(y_coordinate_centered, margin_top) # Ensure it respects a minimum top margin
+
+        # Option 2: Fixed margin from the top (simpler if you don't want vertical centering)
+        # y_coordinate = margin_top
+        
+        # Ensure y_coordinate does not push the window off the bottom of the screen
+        if y_coordinate + app_height > screen_height:
+            y_coordinate = max(screen_height - app_height - margin_top, margin_top) # Try to keep bottom margin too
+
+
+        self.geometry(f"{app_width}x{app_height}+{x_coordinate}+{y_coordinate}")
+
+
+
+
         self.grid_columnconfigure(0, weight=1)
         # self.grid_rowconfigure(5, weight=1) # Adjusted later for new layout
 
@@ -270,49 +297,103 @@ class DownloaderApp(ctk.CTk):
         self.all_extracted_urls = []
         self.current_url_index = 0
         self.initial_fetch_done = False
+        self.selected_browser_type = "chrome" 
+
+
+        default_font = ("", 14) #font = default_font
+        ftp_url_font = ("", 13)
+        idm_path_font = ("Tahoma", 12)
+        idm_path_browse_font = ("", 13)
+        start_button_font = ("Trebuchet MS", 16)
+        abort_button_font = ("Trebuchet MS", 16)
+        logbox_font = ("Consolas", 12)
+        clear_log_text = ("", 11)
 
 
         # --- URL Section ---
         self.url_frame = ctk.CTkFrame(self)
         self.url_frame.grid(row=0, column=0, padx=20, pady=(10,5), sticky="ew")
-        self.url_frame.grid_columnconfigure(0, weight=1)
-        self.url_label = ctk.CTkLabel(self.url_frame, text="Content Page URL:")
+
+        self.url_frame.grid_columnconfigure(0, weight=1)  # URL entry will expand
+        self.url_frame.grid_columnconfigure(1, weight=0)  # Clear button, fixed width
+        self.url_frame.grid_columnconfigure(2, weight=0)  # Paste button, fixed width
+    
+
+        self.url_label = ctk.CTkLabel(self.url_frame, text="CircleFTP URL:", font = default_font)
         self.url_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        self.url_entry = ctk.CTkEntry(self.url_frame, placeholder_text="http://new.circleftp.net/content/00000", height=35)
+
+
+
+        self.url_entry = ctk.CTkEntry(self.url_frame, placeholder_text="http://new.circleftp.net/content/00000", font= ftp_url_font, height=35)
         self.url_entry.grid(row=1, column=0, padx=(10, 3), pady=(5,10), sticky="ew")
+
+        self.clear_icon = self.load_icon("backspace_icon.png", size=(25, 25))
+        self.clear_url_button = ctk.CTkButton(self.url_frame, text="", image=self.clear_icon, height=35, width=40, command=self._clear_url_entry)
+        self.clear_url_button.grid(row=1, column=1, padx=(3, 3), pady=(5,10)) 
+
         self.paste_icon = self.load_icon("paste_icon2.png", size=(24, 24))
         self.paste_button = ctk.CTkButton(self.url_frame, text="", image=self.paste_icon, height=35 ,width=40, command=self.paste_from_clipboard)
-        self.paste_button.grid(row=1, column=1, padx=(3, 10), pady=(5,10))
+        self.paste_button.grid(row=1, column=2, padx=(0, 10), pady=(5,10)) 
+
+
 
         # --- Browser Selection Section ---
         self.browser_frame = ctk.CTkFrame(self)
         self.browser_frame.grid(row=1, column=0, padx=20, pady=5, sticky="ew")
         self.browser_frame.grid_columnconfigure((0,1,2), weight=1)
-        self.browser_label = ctk.CTkLabel(self.browser_frame, text="Choose Browser:")
+        self.browser_label = ctk.CTkLabel(self.browser_frame, text="Choose Browser:", font = default_font)
         self.browser_label.grid(row=0, column=0, columnspan=3, padx=10, pady=5, sticky="w")
+        
+
         browser_icon_size = 35
         self.chrome_icon = self.load_icon("chrome_icon.png", size=(browser_icon_size, browser_icon_size))
         self.firefox_icon = self.load_icon("firefox_icon.png", size=(browser_icon_size, browser_icon_size))
         self.edge_icon = self.load_icon("edge_icon.png", size=(browser_icon_size, browser_icon_size))
+        
+        
         browser_button_height = 70
-        self.chrome_button = ctk.CTkButton(self.browser_frame, text="Chrome", image=self.chrome_icon, compound="top", command=lambda: self.select_browser("chrome"), fg_color=self.browser_button_default_color,height=browser_button_height)
+        self.chrome_button = ctk.CTkButton(self.browser_frame, text="Chrome", font = default_font, image=self.chrome_icon, compound="top", command=lambda: self.select_browser("chrome"), fg_color=self.browser_button_default_color,height=browser_button_height)
         self.chrome_button.grid(row=1, column=0, padx=(15, 10), pady=(8, 15), sticky="ew")
-        self.firefox_button = ctk.CTkButton(self.browser_frame, text="Firefox", image=self.firefox_icon, compound="top", command=lambda: self.select_browser("firefox"), fg_color=self.browser_button_default_color,height=browser_button_height)
+
+        self.firefox_button = ctk.CTkButton(self.browser_frame, text="Firefox", font = default_font, image=self.firefox_icon, compound="top", command=lambda: self.select_browser("firefox"), fg_color=self.browser_button_default_color,height=browser_button_height)
         self.firefox_button.grid(row=1, column=1, padx=10, pady=(8, 15), sticky="ew")
-        self.edge_button = ctk.CTkButton(self.browser_frame, text="Edge", image=self.edge_icon, compound="top", command=lambda: self.select_browser("edge"), fg_color=self.browser_button_default_color,height=browser_button_height)
+
+        self.edge_button = ctk.CTkButton(self.browser_frame, text="Edge", font = default_font, image=self.edge_icon, compound="top", command=lambda: self.select_browser("edge"), fg_color=self.browser_button_default_color,height=browser_button_height)
         self.edge_button.grid(row=1, column=2, padx=(10, 15), pady=(8, 15), sticky="ew")
+
         self.select_browser("chrome", initial_setup=True)
+
+
+        # --- IDM Path Section --- [NEW]
+        self.idm_frame = ctk.CTkFrame(self)
+        self.idm_frame.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
+        self.idm_frame.grid_columnconfigure(1, weight=1) # Path entry takes space
+
+        self.idm_label = ctk.CTkLabel(self.idm_frame, text="IDM Path:", font = default_font)
+        self.idm_label.grid(row=0, column=0, padx=(10,5), pady=5, sticky="w")
+
+
+        
+        self.idm_path_entry = ctk.CTkEntry(self.idm_frame, placeholder_text=r"C:\Program Files (x86)\Internet Download Manager\IDMan.exe", font=idm_path_font)
+        self.idm_path_entry.grid(row=0, column=1, padx=(0,5), pady=5, sticky="ew")
+        # Set a default path if none loaded later
+        self.idm_path_entry.insert(0, r"C:\Program Files (x86)\Internet Download Manager\IDMan.exe")
+        self.idm_path_entry.configure(state="disabled")
+
+
+        self.idm_browse_button = ctk.CTkButton(self.idm_frame, text="Browse...", font = idm_path_browse_font, command=self._browse_idm_path, width=80)
+        self.idm_browse_button.grid(row=0, column=2, padx=(0,10), pady=5, sticky="e")
 
 
         # --- Batch Size Section ---
         self.batch_frame = ctk.CTkFrame(self)
-        self.batch_frame.grid(row=2, column=0, padx=20, pady=(5,5), sticky="ew")
+        self.batch_frame.grid(row=3, column=0, padx=20, pady=(5,5), sticky="ew")
         # Configure columns for label, entry, and slider
         self.batch_frame.grid_columnconfigure(0, weight=0) # Label
         self.batch_frame.grid_columnconfigure(1, weight=0) # Entry
         self.batch_frame.grid_columnconfigure(2, weight=1) # Slider (to take remaining space)
 
-        self.batch_label = ctk.CTkLabel(self.batch_frame, text="Batch size:")
+        self.batch_label = ctk.CTkLabel(self.batch_frame, text="Batch size:", font = default_font)
         self.batch_label.grid(row=0, column=0, padx=(10,5), pady=5, sticky="w")
 
         self.batch_size_entry = ctk.CTkEntry(self.batch_frame, placeholder_text="e.g., 5", width=70) # Adjusted width
@@ -336,28 +417,149 @@ class DownloaderApp(ctk.CTk):
         self.batch_size_entry.bind("<FocusOut>", self._update_slider_from_batch_entry_event)
         self.batch_size_entry.bind("<Return>", self._update_slider_from_batch_entry_event)
 
-        # --- Start Button ---
-        self.start_button = ctk.CTkButton(self, text="Start Download", command=self.handle_start_or_continue, height=40)
-        self.start_button.grid(row=3, column=0, padx=20, pady=(8, 12), sticky="ew") # Row updated
+
+        # --- Action Buttons Frame (Replaces direct Start Button grid) ---
+        self.action_buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.action_buttons_frame.grid(row=4, column=0, padx=20, pady=(8, 12), sticky="ew") 
+        self.action_buttons_frame.grid_columnconfigure(0, weight=5) # Column for Start/Continue
+        self.action_buttons_frame.grid_columnconfigure(1, weight=1) # Column for Abort
+
+        # --- Start/Continue Button (now inside the action_buttons_frame) ---
+        self.start_button = ctk.CTkButton(self.action_buttons_frame, text="Start Download", font= start_button_font, command=self.handle_start_or_continue, height=40)
+        self.start_button.grid(row=0, column=0, columnspan=2, padx=(0,0), pady=0, sticky="ew") # Span 2 columns initially
+
+        # --- Abort Button (New) ---
+        self.abort_button = ctk.CTkButton(self.action_buttons_frame, text="Abort", font= abort_button_font, command=self._abort_process, height=40,
+                                        fg_color="firebrick", hover_color="#B22222") # Darker red for hover
+        self.abort_button.grid_remove() # Start hidden
+
 
         # --- Log Textbox ---
-        logbox_font = ("Consolas", 12)
+        
         self.log_textbox = ctk.CTkTextbox(self, width=500, height=150, font=logbox_font)
-        self.log_textbox.grid(row=4, column=0, padx=20, pady=10, sticky="nsew") # Row updated
+        self.log_textbox.grid(row=5, column=0, padx=20, pady=10, sticky="nsew") # Row updated
         self.log_textbox.insert("end", "Welcome to CircleFTP Batch Downloader!\n")
         self.log_textbox.configure(state="disabled")
-        self.grid_rowconfigure(4, weight=1) # Make log textbox row expandable
+        self.grid_rowconfigure(5, weight=1) # Make log textbox row expandable
 
         # --- Progress Bar and Clear Log Button ---
         self.bottom_controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.bottom_controls_frame.grid(row=5, column=0, padx=(22, 20), pady=(0,10), sticky="ew") # Row updated
+        self.bottom_controls_frame.grid(row=6, column=0, padx=(22, 20), pady=(0,10), sticky="ew") # Row updated
         self.bottom_controls_frame.grid_columnconfigure(0, weight=1)
         self.bottom_controls_frame.grid_columnconfigure(1, weight=0)
         self.progress_bar = ctk.CTkProgressBar(self.bottom_controls_frame, mode="determinate", height=12)
         self.progress_bar.grid(row=0, column=0, padx=(0, 10), pady=0, sticky="ew")
         self.progress_bar.set(0)
-        self.clear_log_button = ctk.CTkButton(self.bottom_controls_frame, text="Clear Log", command=self.clear_log, width=100)
+
+       
+        self.clear_log_button = ctk.CTkButton(self.bottom_controls_frame, text="Clear Log",font=clear_log_text, command=self.clear_log, width=90)
         self.clear_log_button.grid(row=0, column=1, padx=(10,0), pady=0, sticky="e")
+
+
+        # --- Load Config and Set Close Protocol --- [NEW]
+        self._load_config()
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+
+        # Initially hide the abort button
+        self.abort_button.grid_remove()
+
+
+
+    def _abort_process(self):
+        self.log_message("\n--- Download Process Aborted by User ---")
+        # Call finalize which resets states and UI, including hiding the abort button.
+        self._finalize_all_downloads()
+
+
+    def _clear_url_entry(self):
+        self.url_entry.delete(0, ctk.END)
+        self.log_message("URL entry cleared.")
+
+
+    def is_idm_running(self): # Keep this as it is - process name is constant
+            for proc in psutil.process_iter(['name']):
+                if proc.info['name'].lower() == 'idman.exe':
+                    return True
+            return False
+
+    def launch_idm_with_path(self, idm_exec_path):
+        if not self.is_idm_running():
+            try:
+                subprocess.Popen(idm_exec_path, creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
+                time.sleep(1) # Give IDM a moment to initialize
+                return True
+            except FileNotFoundError:
+                return False
+            except Exception:
+                return False
+        return True # IDM was already running
+
+    def _browse_idm_path(self):
+        filepath = filedialog.askopenfilename(
+            title="Select IDMan.exe",
+            filetypes=(("Executable files", "*.exe"), ("All files", "*.*"))
+        )
+        if filepath:
+            self.idm_path_entry.delete(0, ctk.END)
+            self.idm_path_entry.insert(0, filepath)
+            self.log_message(f"IDM path set to: {filepath}")
+
+    def _load_config(self):
+        os.makedirs(CONFIG_DIR, exist_ok=True) # Ensure config dir exists
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+                
+                self.idm_path_entry.delete(0, ctk.END)
+                self.idm_path_entry.insert(0, config.get("idm_path", r"C:\Program Files (x86)\Internet Download Manager\idman.exe"))
+
+                self.url_entry.delete(0, ctk.END)
+                self.url_entry.insert(0, config.get("last_url", ""))
+
+                batch_size = config.get("batch_size", "5")
+                self.batch_size_entry.delete(0, ctk.END)
+                self.batch_size_entry.insert(0, str(batch_size))
+                self._update_slider_from_batch_entry_event() # Update slider to match loaded value
+
+                browser = config.get("browser", "chrome")
+                self.select_browser(browser) # Update browser selection buttons
+
+                self.log_message("Configuration loaded successfully.")
+            else:
+                self.log_message("No configuration file found, using defaults.")
+                # Ensure slider matches default entry if no config
+                self._update_slider_from_batch_entry_event()
+
+        except json.JSONDecodeError:
+            self.log_message("ERROR: Configuration file is corrupted. Using defaults.")
+            # Ensure slider matches default entry on error
+            self._update_slider_from_batch_entry_event()
+        except Exception as e:
+            self.log_message(f"ERROR loading configuration: {e}")
+            # Ensure slider matches default entry on error
+            self._update_slider_from_batch_entry_event()
+
+    def _save_config(self):
+        os.makedirs(CONFIG_DIR, exist_ok=True) # Ensure config dir exists
+        config = {
+            "idm_path": self.idm_path_entry.get(),
+            "last_url": self.url_entry.get(),
+            "browser": self.selected_browser_type,
+            "batch_size": self.batch_size_entry.get()
+        }
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=4)
+            # print("Configuration saved.") # Log to console or textbox
+        except Exception as e:
+            self.log_message(f"ERROR saving configuration: {e}")
+
+    def on_closing(self):
+        """Handle window close event."""
+        self._save_config()
+        self.destroy()
 
 
     def clear_log(self):
@@ -390,21 +592,24 @@ class DownloaderApp(ctk.CTk):
             self.log_message("ERROR: Could not access clipboard.")
 
     def select_browser(self, browser_name, initial_setup=False):
-        global selected_browser_type
+        # global selected_browser_type
         default_fg_color = ctk.ThemeManager.theme["CTkButton"]["fg_color"]
         hover_fg_color = ctk.ThemeManager.theme["CTkButton"]["hover_color"]
+
         self.chrome_button.configure(fg_color=default_fg_color)
         self.firefox_button.configure(fg_color=default_fg_color)
         self.edge_button.configure(fg_color=default_fg_color)
+
+        
         if browser_name == "chrome":
             self.chrome_button.configure(fg_color=hover_fg_color)
-            selected_browser_type = "chrome"
+            self.selected_browser_type = "chrome"
         elif browser_name == "firefox":
             self.firefox_button.configure(fg_color=hover_fg_color)
-            selected_browser_type = "firefox"
+            self.selected_browser_type = "firefox"
         elif browser_name == "edge":
             self.edge_button.configure(fg_color=hover_fg_color)
-            selected_browser_type = "edge"
+            self.selected_browser_type = "edge"
         if not initial_setup:
             self.log_message(f"Selected browser: {browser_name.capitalize()}")
 
@@ -464,6 +669,10 @@ class DownloaderApp(ctk.CTk):
 
         self._set_ui_state_processing(True)
 
+
+        self.abort_button.grid_remove() # Hide abort button when processing starts
+        self.start_button.grid_configure(columnspan=2, padx=(0,0))
+
         if not self.initial_fetch_done: # Corresponds to "Start Download"
             self.log_message("\n--- Starting Download Process ---")
             self.current_url_index = 0
@@ -478,20 +687,40 @@ class DownloaderApp(ctk.CTk):
         thread.start()
 
     def _initial_fetch_and_first_batch_thread(self, url_or_path, batch_size):
-        # --- Pre-checks ---
-        # Pre-checks for IDM are always needed
-        self.log_message("Performing pre-flight checks for IDM...")
-        if not os.path.exists(IDM_PATH):
-            self.log_message(f"ERROR: IDM executable not found at '{IDM_PATH}'.")
+
+        # Get IDM path from UI
+        idm_path_from_ui = self.idm_path_entry.get() # <--- GET IDM PATH
+        if not idm_path_from_ui:
+            self.log_message("ERROR: IDM path cannot be empty.")
             self.after(0, self._reset_ui_after_error, "Start Download")
             return
-        if not launch_idm():
-            self.log_message("ERROR: Could not launch IDM.")
+        
+
+        # --- Pre-checks ---
+        # Pre-checks for IDM are always needed
+        # self.log_message("Performing pre-flight checks for IDM...")
+        # if not os.path.exists(IDM_PATH):
+        #     self.log_message(f"ERROR: IDM executable not found at '{IDM_PATH}'.")
+        #     self.after(0, self._reset_ui_after_error, "Start Download")
+        #     return
+
+
+
+        # New, correct check using the path from UI:
+        self.log_message(f"Performing IDM checks with path: {idm_path_from_ui}") # Log which path is being used
+        if not os.path.exists(idm_path_from_ui): # Use the path from the UI entry
+            self.log_message(f"ERROR: IDM executable not found at '{idm_path_from_ui}'. Please verify the path in settings.")
+            self.after(0, self._reset_ui_after_error, "Start Download")
+            return
+        if not self.launch_idm_with_path(idm_path_from_ui): # Use the method
+            self.log_message("ERROR: Could not launch IDM. Please ensure IDM is installed correctly and path is set.")
             self.after(0, self._reset_ui_after_error, "Start Download")
             return
         self.log_message("IDM is running or launched successfully.")
 
-        # --- MODIFICATION START: Conditional Internet Check ---
+
+
+        # --- Conditional Internet Check ---
         is_web_url = url_or_path.startswith('http://') or url_or_path.startswith('https://')
         if is_web_url:
             self.log_message("Checking internet connection for web URL...")
@@ -509,7 +738,10 @@ class DownloaderApp(ctk.CTk):
         def selenium_progress_update(p_val): # p_val is 0.0 to 1.0 for selenium's task
             self.after(0, lambda: self._update_progress_bar(p_val * 0.40))
 
-        html_content = get_full_html_content_selenium(url_or_path, selected_browser_type, self.log_message, selenium_progress_update)
+        html_content = get_full_html_content_selenium(url_or_path, self.selected_browser_type, self.log_message, selenium_progress_update) # <--- USE self
+
+
+        
         if not html_content:
             self.log_message("Failed to retrieve HTML content. Cannot proceed.")
             self.after(0, self._reset_ui_after_error, "Start Download")
@@ -536,6 +768,8 @@ class DownloaderApp(ctk.CTk):
         # --- Send First Batch ---
         self._send_batch_thread(batch_size, is_first_batch=True)
 
+        
+
 
     def _send_batch_thread(self, batch_size, is_first_batch=False):
         start_idx = self.current_url_index
@@ -549,6 +783,14 @@ class DownloaderApp(ctk.CTk):
                  self.log_message("All download links have been sent to IDM.")
             self.after(0, self._finalize_all_downloads)
             return
+        
+        # --- GET IDM PATH --- 
+        idm_path_from_ui = self.idm_path_entry.get()
+        if not idm_path_from_ui or not os.path.exists(idm_path_from_ui):
+            self.log_message(f"ERROR: Cannot send batch. Invalid IDM path: '{idm_path_from_ui}'.")
+            self.after(0, self._reset_ui_after_error, "Continue") # Reset to continue or start
+            return
+        # --- END GET IDM PATH ---
 
         # --- Send to IDM (50% to 100% of progress overall) ---
         # links_processed_before_this_batch accounts for links sent in *previous* batches
@@ -563,7 +805,8 @@ class DownloaderApp(ctk.CTk):
             overall_progress = 0.5 + progress_for_idm_phase # Add the 0.5 from fetch/extract phase
             self.after(0, lambda: self._update_progress_bar(min(overall_progress, 1.0)))
 
-        initiate_idm_direct_downloads(urls_to_send_this_batch, IDM_PATH, self.log_message, idm_item_processed_callback)
+        # Use the UI path here
+        initiate_idm_direct_downloads(urls_to_send_this_batch, idm_path_from_ui, self.log_message, idm_item_processed_callback) # <--- USE UI PATH
         
         self.current_url_index = end_idx # Update main index
 
@@ -585,6 +828,20 @@ class DownloaderApp(ctk.CTk):
             self.after(0, lambda: self.edge_button.configure(state="disabled"))
             self.after(0, lambda: self.url_entry.configure(state="disabled"))
 
+            self.after(0, lambda: self.start_button.grid(row=0, column=0, padx=(0, 5), pady=0, sticky="ew")) # Ensure start button takes its column
+            self.after(0, lambda: self.start_button.grid_configure(columnspan=1, padx=(0,5)))
+
+            # --- Show and enable Abort button --- [NEW]
+            self.after(0, lambda: self.abort_button.grid(row=0, column=1, padx=(5, 0), pady=0, sticky="ew"))
+            self.after(0, lambda: self.abort_button.configure(state="normal"))
+            # --- END NEW ---
+
+
+
+            self.after(0, lambda: self.batch_size_entry.configure(state="normal"))
+            self.after(0, lambda: self.clear_log_button.configure(state="normal"))
+
+
 
         else:
             self.log_message("All download links have been sent to IDM.")
@@ -594,8 +851,16 @@ class DownloaderApp(ctk.CTk):
     def _reset_ui_after_error(self, button_text="Start Download"):
         self.log_message("\n--- Process Interrupted or Failed ---")
         self._update_progress_bar(0)
+
+
         self._set_ui_state_processing(False) # Re-enables most controls
         self.start_button.configure(text=button_text, state="normal")
+
+        self.start_button.grid(row=0, column=0, padx=(0, 5), pady=0, sticky="ew")
+        self.start_button.grid_configure(columnspan=2, padx=(0,0)) 
+
+        self.abort_button.grid_remove() # Hide abort button
+
         # Reset state variables
         self.all_extracted_urls = []
         self.current_url_index = 0
@@ -613,7 +878,14 @@ class DownloaderApp(ctk.CTk):
             
         self._set_ui_state_processing(False) # Re-enables most controls
         self.start_button.configure(text="Start Download", state="normal")
+
+        self.start_button.grid(row=0, column=0, padx=(0, 5), pady=0, sticky="ew") # Place it correctly
+        self.start_button.grid_configure(columnspan=2, padx=(0,0))
+
+        self.abort_button.grid_remove() # Hide abort button
         # Reset state variables for a completely new run
+
+
         self.all_extracted_urls = []
         self.current_url_index = 0
         self.initial_fetch_done = False
