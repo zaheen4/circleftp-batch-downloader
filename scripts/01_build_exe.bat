@@ -24,7 +24,7 @@ REM If you don't have an icon, remove the --icon="..." part.
 set ICON_PATH=app_icon.ico
 REM Example if icon is in assets: set ICON_PATH=assets\app_icon.ico
 
-pyinstaller --name "BatchDownloader" --onefile --windowed --icon="%ICON_PATH%" --add-data "assets;assets" --add-data "drivers;drivers" app.py
+pyinstaller --name "BatchDownloader" --onefile --windowed --icon="%ICON_PATH%" --add-data "assets;assets" app.py
 
 if %errorlevel% neq 0 (
     echo PyInstaller build failed.

@@ -23,6 +23,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
+# imports for automatic driver management
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
 # --- Base Directory Configuration (for .exe bundling) ---
 if getattr(sys, 'frozen', False): # Running as a bundled exe
     BUNDLE_DIR = sys._MEIPASS
@@ -35,12 +40,8 @@ CONFIG_DIR = os.path.join(os.path.expanduser('~'), 'CircleFTPDownloaderConfig')
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # --- Resource Directories ---
-DRIVER_DIR = os.path.join(BUNDLE_DIR, "drivers")
 ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
 
-CHROMEDRIVER_PATH = os.path.join(DRIVER_DIR, "chromedriver.exe")
-GECKODRIVER_PATH = os.path.join(DRIVER_DIR, "geckodriver.exe")
-EDGEDRIVER_PATH = os.path.join(DRIVER_DIR, "msedgedriver.exe")
 
 # --- Utility Functions ---
 def is_connected_to_internet(host="8.8.8.8", port=53, timeout=3):
@@ -51,9 +52,10 @@ def is_connected_to_internet(host="8.8.8.8", port=53, timeout=3):
     except OSError:
         return False
 
+
 # --- Selenium HTML Fetching ---
 def get_full_html_content_selenium(url, browser_type, log_callback, progress_callback=None):
-    """Fetches HTML from a URL or local file using Selenium."""
+    """Fetches HTML from a URL or local file using Selenium with automatic driver management."""
     url_to_load = url
     is_local_file = False
 
@@ -80,15 +82,19 @@ def get_full_html_content_selenium(url, browser_type, log_callback, progress_cal
         service = None
         options = None
 
+        # The webdriver-manager will download and cache the correct driver automatically.
         if browser_type.lower() == 'chrome':
-            service = ChromeService(executable_path=CHROMEDRIVER_PATH)
+            log_callback("Initializing Chrome driver... (may download driver if needed)")
+            service = ChromeService(ChromeDriverManager().install())
             options = webdriver.ChromeOptions()
         elif browser_type.lower() == 'firefox':
-            service = FirefoxService(executable_path=GECKODRIVER_PATH)
+            log_callback("Initializing Firefox driver... (may download driver if needed)")
+            service = FirefoxService(GeckoDriverManager().install())
             options = webdriver.FirefoxOptions()
             options.add_argument("-headless") # Firefox needs this specific argument for headless
         elif browser_type.lower() == 'edge':
-            service = EdgeService(executable_path=EDGEDRIVER_PATH)
+            log_callback("Initializing Edge driver... (may download driver if needed)")
+            service = EdgeService(EdgeChromiumDriverManager().install())
             options = webdriver.EdgeOptions()
         else:
             log_callback(f"ERROR: Unsupported browser: {browser_type}.")
@@ -129,19 +135,20 @@ def get_full_html_content_selenium(url, browser_type, log_callback, progress_cal
         if progress_callback: progress_callback(1.0)
         return full_html
 
-    except FileNotFoundError as e:
-        log_callback(f"ERROR: WebDriver for {browser_type} not found at '{e.filename}'. Check 'drivers' folder.")
-        if progress_callback: progress_callback(0)
-        return None
     except TimeoutException:
         log_callback(f"ERROR: Timeout waiting for download section on {url_to_load}.")
         if is_local_file: log_callback("For local files, section might be missing or JS-dependent.")
         if progress_callback: progress_callback(0)
         return None
     except WebDriverException as e:
-        log_callback(f"ERROR: Selenium WebDriver failed for {browser_type} with {url_to_load}: {e}")
-        if "net::ERR_FILE_NOT_FOUND" in str(e).lower():
+        log_callback(f"ERROR: Selenium WebDriver failed for {browser_type} with {url_to_load}.")
+        if "net::ERR_INTERNET_DISCONNECTED" in str(e) or "net::ERR_NAME_NOT_RESOLVED" in str(e):
+             log_callback("Hint: This may be due to a network issue or the webdriver-manager failing to download a driver.")
+        elif "net::ERR_FILE_NOT_FOUND" in str(e).lower():
             log_callback(f"Hint: Local file path '{url}' might be incorrect.")
+        else:
+            log_callback(f"WebDriver-Manager or Browser Error: {str(e).splitlines()[0]}")
+
         if progress_callback: progress_callback(0)
         return None
     except Exception as e:
@@ -152,32 +159,66 @@ def get_full_html_content_selenium(url, browser_type, log_callback, progress_cal
         if driver:
             driver.quit() # Ensure browser closes
 
+
 # --- HTML Parsing ---
 def extract_download_links_from_html(html_content, log_callback):
-    """Extracts download URLs from the provided HTML content."""
-    log_callback("Parsing HTML for download links...")
+    """Extracts download URLs from the provided HTML content, preserving season and episode order."""
+    log_callback("Parsing HTML for download links in sequential order...")
     soup = BeautifulSoup(html_content, 'html.parser')
     download_urls = []
-    
-    # Specific selector for the download links section on the target site
+
+    # Find the main section containing the tabs and download links
     download_section = soup.find('section', class_='bg-light mt-2 rounded p-2 w-75 mx-auto')
     if not download_section:
-        log_callback("WARNING: Download section not found. HTML structure might have changed.")
+        log_callback("WARNING: Download section ('section.bg-light...') not found. HTML structure might have changed.")
         return []
-    
-    # Specific selector for the download anchor tags
-    links = download_section.find_all('a', class_='btn btn-success', href=True)
-    if not links:
-        log_callback("WARNING: No download links (<a> tags with 'btn-success') found in section.")
-        return []
-        
-    for link in links:
-        url = link['href']
-        if url:
-            download_urls.append(url)
-            
-    log_callback(f"Found {len(download_urls)} potential download links.")
-    return list(set(download_urls)) # Return unique links
+
+    # Find all tab panes which contain a season's episodes.
+    # We rely on the document order of these panes to be correct (Season 1, Season 2, etc.)
+    season_panes = download_section.select('div.tab-content > div[role="tabpanel"]')
+    if not season_panes:
+        log_callback("WARNING: No season tab panes found. Checking for links directly as a fallback.")
+        # Fallback to original behavior if new structure isn't found
+        links = download_section.find_all('a', class_='btn btn-success', href=True)
+        if not links:
+            log_callback("WARNING: No download links (<a> tags with 'btn-success') found in section.")
+            return []
+        for link in links:
+            url = link['href']
+            if url:
+                download_urls.append(url)
+        log_callback(f"Found {len(download_urls)} links using fallback method (order not guaranteed).")
+        return download_urls
+
+    log_callback(f"Found {len(season_panes)} season tabs to process.")
+
+    # Iterate through each season's tab pane
+    for i, season_pane in enumerate(season_panes):
+        # Try to extract a human-readable season name from the element's ID
+        season_name_id = season_pane.get('id', f"Unknown Season {i+1}")
+        season_name = season_name_id.replace('controlled-tab-example-tabpane-', '').replace('-', ' ')
+        log_callback(f"--- Processing {season_name} ---")
+
+        # Find all download links within this season's pane, in document order.
+        links = season_pane.find_all('a', class_='btn btn-success', href=True)
+
+        if not links:
+            log_callback(f"No download links found in {season_name}.")
+            continue
+
+        season_link_count = 0
+        for link in links:
+            url = link['href']
+            if url:
+                download_urls.append(url)
+                season_link_count += 1
+
+        log_callback(f"Found {season_link_count} links for {season_name}.")
+
+    # The list is returned directly to preserve the scraped order.
+    log_callback(f"Finished parsing. Found a total of {len(download_urls)} download links in sequential order.")
+    return download_urls
+
 
 # --- IDM Integration ---
 def initiate_idm_direct_downloads(urls, idm_exec_path, log_callback, count_progress_callback=None):
@@ -811,7 +852,6 @@ class DownloaderApp(ctk.CTk):
 # --- Main application entry point ---
 if __name__ == "__main__":
     # Ensure necessary directories exist on startup
-    os.makedirs(DRIVER_DIR, exist_ok=True)
     os.makedirs(ASSETS_DIR, exist_ok=True)
     # Config directory is created in _load_config/_save_config
 
