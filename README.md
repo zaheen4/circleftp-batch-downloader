@@ -45,7 +45,8 @@ This tool is particularly useful for users in Bangladesh who frequently download
 
 * **Operating System:** Windows (tested on Windows 10/11).
 * **Internet Download Manager (IDM):** Must be installed on your PC.
-* **Web Browsers (Optional but Recommended):** If you plan to fetch links from live URLs, having Google Chrome, Mozilla Firefox, or Microsoft Edge installed is recommended. The necessary WebDrivers are included with the application for these browsers.
+* **Web Browsers:** If you plan to fetch links from live URLs, having Google Chrome, Mozilla Firefox, or Microsoft Edge installed is recommended.
+
 
 ## How to Download & Run
 
@@ -104,7 +105,10 @@ You can delete this file to reset to default settings if needed.
 * **Antivirus Warning:** Some antivirus programs might flag the `.exe` as suspicious (a false positive) because it's a PyInstaller bundle. You may need to add an exception for the application in your antivirus software.
 * **"IDM executable not found":** Ensure the path set in the "IDM Path" field is correct and points directly to `IDMan.exe`.
 * **"Download section not found":** If the website (e.g., CircleFTP) changes its HTML structure, the application might not be able to find the download links. This would require an update to the script's parsing logic.
-* **WebDriver Errors:** If fetching from a live URL fails with a WebDriver error, ensure the selected browser is installed correctly and that its version is reasonably up-to-date. The included WebDrivers attempt to match common browser versions.
+* **WebDriver Errors:** The application automatically downloads the correct driver for your browser. If this process fails, you might see a WebDriver-related error in the log.
+    * **Check your internet connection.** An internet connection is required the first time you use a browser with the app so it can download its driver.
+    * **Check your firewall/antivirus.** Aggressive security software might block the driver download process. Try adding an exception for the application.
+    * **Ensure the browser is installed correctly** in its standard location.
 
 ## Building from Source
 
@@ -128,19 +132,10 @@ If you want to modify or build the application from source:
     ```
 
 4.  **Install Dependencies:**
-    The `requirements.txt` file should list necessary packages. You can create one using `pip freeze > requirements.txt` in your development environment. Key libraries include:
-    ```
-    customtkinter
-    Pillow
-    beautifulsoup4
-    selenium
-    psutil
-    pyinstaller (for building)
-    ```
-    Install them:
+    
+    Install all the required packages using the `requirements.txt` file:
     ```bash
-    pip install -r requirements.txt 
-    # Or: pip install customtkinter Pillow beautifulsoup4 selenium psutil pyinstaller
+    pip install -r requirements.txt
     ```
 
 5.  **Run the script:**
@@ -148,13 +143,12 @@ If you want to modify or build the application from source:
     python app.py
     ```
 
-6.  **Build the Executable (Optional):**
-    Ensure `assets` and `drivers` folders are present.
+6.  **Build the Executable (Optional)**
+
+    After building, check the `dist/` folder for the EXE file
     ```
-    pyinstaller --name "BatchDownloader" --onefile --windowed --icon="my_icon.ico" --add-data "assets;assets" --add-data "drivers;drivers" app.py
+    pyinstaller --name "BatchDownloader" --onefile --windowed --icon="path/to/your/icon.ico" --add-data "assets;assets" app.py
     ```
 
 
 ---
-
-Feel free to ask for feedback or report any issues!

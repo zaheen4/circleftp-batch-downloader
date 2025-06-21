@@ -173,7 +173,6 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-HTMLs/
-app[Backkup].py
+
 links.txt
 testhtmls/

@@ -17,6 +17,7 @@ pycparser==2.22
 pyinstaller==6.13.0
 pyinstaller-hooks-contrib==2025.4
 PySocks==1.7.1
+python-dotenv==1.1.0
 pywin32-ctypes==0.2.3
 requests==2.32.3
 selenium==4.33.0
@@ -28,5 +29,6 @@ trio==0.30.0
 trio-websocket==0.12.2
 typing_extensions==4.13.2
 urllib3==2.4.0
+webdriver-manager==4.0.2
 websocket-client==1.8.0
 wsproto==1.2.0
